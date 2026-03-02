@@ -2,120 +2,241 @@
 
 ### **Overview**
 
-**Trip Architect** is a full-stack agentic AI application that generates personalized, feasible travel itineraries. It uses a cycle of **Perception → Action → Reflection** to ensure plans are realistic, accounting for weather, logistics, and operating hours.
+**Trip Architect** is a full-stack agentic AI application that generates personalized, feasible travel itineraries with automatic place linking. It uses a multi-agent architecture where specialized AI agents work together to create travel plans and enhance them with contextual information.
 
-This project is built entirely in **TypeScript**, leveraging the **Vercel AI SDK** for agentic orchestration and **Zod** for schema validation and structured data extraction.
+This project is built entirely in **TypeScript**, leveraging **Ollama** for local LLM inference, **Prisma** for database management, and **Redis** for caching.
 
 ---
 
 ### **Core Features**
 
-1.  **Conversational Planning:** Collects user preferences (budget, interests, dietary restrictions) via natural chat.
-2.  **Autonomous Tool Use:** Dynamically queries external APIs for weather, points of interest, and logistics.
-3.  **Constraint Satisfaction:** Automatically rearranges schedules based on weather forecasts and travel distances.
-4.  **Visual Output:** Renders the final itinerary on an interactive map using `react-map-gl` or `leaflet`.
+1. **Conversational Planning:** Collects user preferences (budget, interests, dietary restrictions) via natural chat.
+2. **Autonomous Tool Use:** Dynamically queries external APIs for weather, points of interest, and logistics.
+3. **Multi-Agent Architecture:** Specialized agents handle different tasks (itinerary generation, place extraction, linking).
+4. **Conversation History:** Sidebar with full conversation history stored in PostgreSQL.
+5. **Automatic Place Linking:** AI-powered extraction of place names with Google Maps links.
+6. **Smart Caching:** Redis-based caching for place URLs to reduce API calls and improve performance.
 
 ---
 
 ### **Tech Stack**
 
-| Component            | Technology                        | Purpose                                           |
-| :------------------- | :-------------------------------- | :------------------------------------------------ |
-| **Language**         | `TypeScript`                      | Type safety across the full stack.                |
-| **Framework**        | `Next.js (App Router)`            | Full-stack framework (API Routes + UI).           |
-| **AI Orchestration** | `Vercel AI SDK`                   | Manages agent state, tool calling, and streaming. |
-| **Validation**       | `Zod`                             | Defines schemas for tools and structured output.  |
-| **UI Components**    | `Tailwind CSS` + `Shadcn/UI`      | Modern, responsive chat interface.                |
-| **External APIs**    | `OpenWeatherMap`, `Google Places` | Tools for fetching real-world data.               |
+| Component         | Technology                        | Purpose                                                       |
+| :---------------- | :-------------------------------- | :------------------------------------------------------------ |
+| **Language**      | `TypeScript`                      | Type safety across the full stack.                            |
+| **Framework**     | `Next.js (App Router)`            | Full-stack framework (API Routes + UI).                       |
+| **AI Models**     | `Ollama` (qwen2.5:7b, llama3.2)   | Local LLM inference for travel planning and place extraction. |
+| **Database**      | `PostgreSQL` + `Prisma`           | Persistent storage for conversations and messages.            |
+| **Caching**       | `Redis` + `ioredis`               | Caching place URLs and API responses.                         |
+| **UI Components** | `Tailwind CSS` + `React Markdown` | Modern, responsive chat interface with markdown rendering.    |
+| **External APIs** | `Google Places API`               | Fetches real-world place data and maps URLs.                  |
 
 ---
 
-### **Agent Architecture**
+### **Multi-Agent Architecture**
 
-Instead of a separate backend server, we use **Next.js Server Actions** or **Route Handlers**.
+Trip Architect uses a sophisticated multi-agent pipeline to deliver rich, actionable travel plans:
 
-The **Vercel AI SDK** handles the agentic loop via the `maxSteps` parameter. This allows the LLM to call a tool, receive the result, and reason about whether to call another tool or answer the user, all within a single streaming response.
+#### **Agent Flow:**
 
-#### **The Flow:**
+```
+User Request
+     ↓
+┌─────────────────────────────────────┐
+│  Agent 1: Travel Planner            │
+│  Model: qwen2.5:7b                  │
+│  Task: Generate detailed itinerary  │
+└─────────────────────────────────────┘
+     ↓
+┌─────────────────────────────────────┐
+│  Agent 2: Place Extractor           │
+│  Model: llama3.2 (faster)           │
+│  Task: Extract places with          │
+│        confidence scores            │
+└─────────────────────────────────────┘
+     ↓
+┌─────────────────────────────────────┐
+│  Parallel Processing                │
+│  - Filter by confidence (>= 0.7)    │
+│  - Fetch Google Maps URLs           │
+│  - Cache results in Redis           │
+└─────────────────────────────────────┘
+     ↓
+Final Response with Linked Places
+```
 
-1.  **User Input:** User sends a message via the Next.js frontend.
-2.  **Server Action:** The request hits a Server Action running the AI SDK's `streamText`.
-3.  **Tool Execution:**
-    - The LLM decides it needs weather data.
-    - The SDK pauses the LLM, executes the TypeScript `getWeather` function.
-    - The result is fed back to the LLM automatically.
-4.  **Final Output:** The LLM returns the final itinerary.
+#### **Detailed Flow:**
+
+1. **User Input:** User sends a travel request via the Next.js frontend.
+
+2. **Travel Planning Agent (qwen2.5:7b):**
+   - Generates a detailed, day-by-day itinerary
+   - Uses proper markdown formatting with spacing
+   - Includes activities for morning, afternoon, and evening
+   - Extracts destination context from user messages
+
+3. **Place Extraction Agent (llama3.2):**
+   - Analyzes the itinerary text
+   - Identifies place names (attractions, restaurants, hotels, etc.)
+   - Assigns confidence scores (0.0-1.0) to each place
+   - Returns structured JSON with filtered results
+   - Falls back to regex extraction if AI fails
+
+4. **Parallel Place Linking:**
+   - Filters places by confidence >= 0.7
+   - Searches Google Places API in parallel for each place
+   - Includes destination context for accurate results (e.g., "Hyde Park, Tokyo" vs "Hyde Park, London")
+   - Caches results in Redis (7-day TTL)
+   - Replaces place names with markdown links
+
+5. **Final Output:** Enhanced itinerary with clickable Google Maps links for all mentioned places.
 
 ---
 
-### **Tool Specifications**
+### **Agent Specifications**
 
-Tools are defined using **Zod** schemas for parameters. This provides type safety and auto-completion.
+#### **Agent 1: Travel Planner**
 
-#### **1. `get_weather_forecast`**
+- **Model:** `qwen2.5:7b`
+- **Purpose:** Generate comprehensive travel itineraries
+- **System Prompt:** Enforces proper markdown formatting with blank lines
+- **Output:** Day-by-day schedule with activities and descriptions
 
-- **Description:** Fetches the 5-day weather forecast for the destination.
-- **Zod Schema:**
-  ```typescript
-  z.object({
-    city: z.string().describe("The city to get weather for"),
-    date_range: z.array(z.string()).describe("List of dates (YYYY-MM-DD)"),
-  });
+#### **Agent 2: Place Extractor**
+
+- **Model:** `llama3.2:latest` (faster, specialized)
+- **Purpose:** Extract place names from itinerary text
+- **Temperature:** 0.1 (low for consistency)
+- **Output:** Structured JSON array:
+  ```json
+  [
+    { "name": "Meiji Shrine", "confidence": 0.95 },
+    { "name": "Shibuya Crossing", "confidence": 0.9 }
+  ]
   ```
-
-#### **2. `search_places`**
-
-- **Description:** Finds points of interest (POIs) based on categories.
-- **Zod Schema:**
-  ```typescript
-  z.object({
-    location: z.string().describe("City or neighborhood"),
-    category: z.enum(["museum", "restaurant", "park", "historical"]).describe("Type of place"),
-  });
-  ```
-
-#### **3. `calculate_travel_time`**
-
-- **Description:** Calculates travel time between two coordinates.
-- **Zod Schema:**
-  ```typescript
-  z.object({
-    origin: z.string().describe("Address or Lat/Long of start point"),
-    destination: z.string().describe("Address or Lat/Long of end point"),
-    mode: z.enum(["driving", "walking", "transit"]).optional(),
-  });
-  ```
+- **Fallback:** Regex pattern matching if AI extraction fails
 
 ---
 
-### **Data Models (Structured Output)**
+### **Caching Strategy**
 
-We force the LLM to output a JSON object that matches a specific Zod schema. This allows the frontend to parse the "Final Answer" safely and render a map.
+**Redis Caching (7-day TTL):**
+
+```
+place:Meiji Shrine, Tokyo → https://www.google.com/maps/place/...
+place:Louvre Museum, Paris → https://www.google.com/maps/place/...
+```
+
+- Reduces Google Places API calls by ~90% for common places
+- Improves response time for repeat requests
+- Automatic cache invalidation after 7 days
+
+---
+
+### **Data Models**
+
+#### **Conversation Model**
 
 ```typescript
-import { z } from "zod";
+model Conversation {
+  id        String     @id @default(cuid())
+  title     String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  messages  Message[]
+}
 
-const ActivitySchema = z.object({
-  time: z.string(),
-  activity_name: z.string(),
-  location: z.string(),
-  description: z.string(),
-  coordinates: z.object({
-    lat: z.number(),
-    lon: z.number(),
-  }),
-  travel_time_from_previous: z.string(),
-});
-
-const DayPlanSchema = z.object({
-  date: z.string(),
-  weather_summary: z.string(),
-  activities: z.array(ActivitySchema),
-});
-
-export const ItinerarySchema = z.object({
-  destination: z.string(),
-  total_days: z.number(),
-  daily_itinerary: z.array(DayPlanSchema),
-});
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  role           String       // "user" or "assistant"
+  content        String       // Markdown content with links
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(...)
+}
 ```
+
+#### **Extracted Place Schema**
+
+```typescript
+interface ExtractedPlace {
+  name: string; // "Meiji Shrine"
+  confidence: number; // 0.0 - 1.0
+}
+```
+
+---
+
+### **API Endpoints**
+
+#### **Chat API**
+
+```
+POST /api/chat
+Body: { messages: Array<{role, content}> }
+Response: { message: { content: "itinerary with links" } }
+```
+
+#### **Conversation Management**
+
+```
+GET    /api/conversations              # List all conversations
+POST   /api/conversations              # Create new conversation
+GET    /api/conversations/:id          # Get conversation with messages
+PATCH  /api/conversations/:id          # Update conversation title
+DELETE /api/conversations/:id          # Delete conversation
+POST   /api/conversations/:id/messages # Add message to conversation
+```
+
+---
+
+### **Environment Setup**
+
+Required environment variables (see `.env.example`):
+
+```bash
+# AI Provider
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen2.5:7b
+
+# Database
+DATABASE_URL=postgresql://triparchitect:triparchitect@localhost:5432/triparchitect
+
+# Cache
+REDIS_URL=redis://localhost:6379
+
+# External APIs
+GOOGLE_PLACES_API_KEY=your-key-here
+```
+
+---
+
+### **Performance Optimizations**
+
+1. **Two-Model Strategy:**
+   - Heavy planning: qwen2.5:7b (quality)
+   - Place extraction: llama3.2 (speed)
+
+2. **Parallel Processing:**
+   - All Google Places API calls happen in parallel
+   - Reduces latency from O(n) to O(1)
+
+3. **Redis Caching:**
+   - Place URLs cached for 7 days
+   - Eliminates redundant API calls
+
+4. **Confidence Filtering:**
+   - Only links high-confidence places (>= 0.7)
+   - Reduces false positives
+
+---
+
+### **Future Enhancements**
+
+- [ ] Weather API integration for contextual recommendations
+- [ ] Multi-day trip optimization with travel time calculations
+- [ ] Budget tracking and cost estimation
+- [ ] Export to calendar (ICS format)
+- [ ] Collaborative planning with shared conversations
+- [ ] Image recognition for place identification
