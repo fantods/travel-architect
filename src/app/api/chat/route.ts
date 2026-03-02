@@ -1,44 +1,35 @@
-import { openai } from "@ai-sdk/openai";
-import { stepCountIs, streamText } from "ai";
-import {
-  calculateTravelTime,
-  getWeatherForecast,
-  searchPlaces,
-} from "@/lib/tools";
-
 export async function POST(req: Request) {
-  const { messages } = await req.json();
+  try {
+    const { messages } = await req.json();
 
-  const result = streamText({
-    model: openai("gpt-4o"),
-    system: `You are Trip Architect, an AI travel planning assistant. You help users plan detailed, personalized travel itineraries.
+    const formattedMessages = messages.map((msg: any) => ({
+      role: msg.role,
+      content: msg.content || msg.parts?.map((p: any) => p.text).join("") || "",
+    }));
 
-When planning trips:
-1. First understand the user's preferences (budget, interests, dietary restrictions, travel style)
-2. Use available tools to gather real-time information about weather, places, and travel times
-3. Create realistic itineraries that account for travel time, opening hours, and weather
-4. Always be specific with times, locations, and recommendations
-5. Consider the user's interests when suggesting activities
+    const response = await fetch("http://localhost:11434/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "qwen2.5:7b",
+        messages: [
+          {
+            role: "system",
+            content: "You are Trip Architect, a helpful travel planning assistant.",
+          },
+          ...formattedMessages,
+        ],
+        stream: false,
+      }),
+    });
 
-Available tools:
-- getWeatherForecast: Check weather for planning outdoor vs indoor activities
-- searchPlaces: Find restaurants, museums, parks, historical sites, art venues, and entertainment
-- calculateTravelTime: Estimate travel time between locations for realistic scheduling
+    const data = await response.json();
 
-When you have gathered enough information and created a plan, present the itinerary in a clear, structured format with:
-- Destination overview
-- Daily breakdown with specific times
-- Activity descriptions with locations
-- Travel time between activities
-- Weather considerations`,
-    messages,
-    tools: {
-      getWeatherForecast,
-      searchPlaces,
-      calculateTravelTime,
-    },
-    stopWhen: stepCountIs(10),
-  });
-
-  return result.toTextStreamResponse();
+    return Response.json({
+      message: data.message,
+    });
+  } catch (error) {
+    console.error("API Error:", error);
+    return Response.json({ error: String(error) }, { status: 500 });
+  }
 }

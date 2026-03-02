@@ -24,14 +24,7 @@ export const searchPlaces = tool({
   inputSchema: z.object({
     location: z.string().describe("City or neighborhood"),
     category: z
-      .enum([
-        "museum",
-        "restaurant",
-        "park",
-        "historical",
-        "art",
-        "entertainment",
-      ])
+      .enum(["museum", "restaurant", "park", "historical", "art", "entertainment"])
       .describe("Type of place to search for"),
   }),
   execute: async ({ location, category }) => {
@@ -147,10 +140,7 @@ export const calculateTravelTime = tool({
   inputSchema: z.object({
     origin: z.string().describe("Address or coordinates of start point"),
     destination: z.string().describe("Address or coordinates of end point"),
-    mode: z
-      .enum(["driving", "walking", "transit"])
-      .optional()
-      .default("transit"),
+    mode: z.enum(["driving", "walking", "transit"]).optional().default("transit"),
   }),
   execute: async ({ origin, destination, mode = "transit" }) => {
     const baseTime = Math.floor(Math.random() * 30) + 5;
